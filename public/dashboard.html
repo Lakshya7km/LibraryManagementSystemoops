@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - Library Management System</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="css/styles.css" rel="stylesheet">
+    <style>
+        .card {
+            margin-top: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .table-responsive {
+            margin-top: 20px;
+        }
+        .nav-tabs .nav-link {
+            color: #495057;
+        }
+        .nav-tabs .nav-link.active {
+            color: #007bff;
+            font-weight: bold;
+        }
+        .btn-sm {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.875rem;
+        }
+        .text-muted {
+            color: #6c757d !important;
+        }
+        .card-header.bg-primary {
+            background-color: #007bff !important;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container">
+            <a class="navbar-brand" href="#">Library Management System</a>
+            <div class="d-flex align-items-center">
+                <span class="text-light me-3" id="studentName">Welcome, Student</span>
+                <a href="/logout" class="btn btn-outline-light">Logout</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <div class="row">
+            <!-- Main Content (Left Side) -->
+            <div class="col-md-9">
+                <h2 class="mb-4">Library Dashboard</h2>
+                
+                <ul class="nav nav-tabs" id="dashboardTabs" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active" id="available-tab" data-bs-toggle="tab" data-bs-target="#available" type="button" role="tab">Available Books</button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="issued-tab" data-bs-toggle="tab" data-bs-target="#issued" type="button" role="tab">My Issued Books</button>
+                    </li>
+                </ul>
+
+                <div class="tab-content mt-4" id="dashboardTabsContent">
+                    <!-- Available Books Tab -->
+                    <div class="tab-pane fade show active" id="available" role="tabpanel">
+                        <div class="table-responsive">
+                            <table class="table table-striped" id="availableBooksTable">
+                                <thead>
+                                    <tr>
+                                        <th>ISBN</th>
+                                        <th>Title</th>
+                                        <th>Author</th>
+                                        <th>Quantity</th>
+                                        <th>Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="availableBooks">
+                                    <!-- Books will be loaded here -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Issued Books Tab -->
+                    <div class="tab-pane fade" id="issued" role="tabpanel">
+                        <div class="table-responsive">
+                            <table class="table table-striped" id="issuedBooksTable">
+                                <thead>
+                                    <tr>
+                                        <th>ISBN</th>
+                                        <th>Title</th>
+                                        <th>Issue Date</th>
+                                        <th>Return Date</th>
+                                        <th>Status</th>
+                                        <th>Fine/Pending Fine</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="issuedBooks">
+                                    <!-- Issued books will be loaded here -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Student Profile (Right Side) -->
+            <div class="col-md-3">
+                <div class="card">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="mb-0">Student Profile</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <h6 class="text-muted">Username</h6>
+                            <p class="mb-0" id="profileUsername"></p>
+                        </div>
+                        <div class="mb-3">
+                            <h6 class="text-muted">Name</h6>
+                            <p class="mb-0" id="profileName"></p>
+                        </div>
+                        <div class="mb-3">
+                            <h6 class="text-muted">Email</h6>
+                            <p class="mb-0" id="profileEmail"></p>
+                        </div>
+                        <div class="mb-3">
+                            <h6 class="text-muted">Member Since</h6>
+                            <p class="mb-0" id="profileCreatedAt"></p>
+                        </div>
+                        <hr>
+                        <div class="mb-3">
+                            <h6 class="text-muted">Issued Books</h6>
+                            <p class="mb-0" id="issuedCount">0 books</p>
+                        </div>
+                        <div class="mb-3">
+                            <h6 class="text-muted">Total Fines</h6>
+                            <p class="mb-0">₹<span id="totalFines">0.00</span></p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Load our OOP classes -->
+    <script src="js/SessionHandler.js"></script>
+    <script src="js/BookManager.js"></script>
+    <script src="js/ProfileManager.js"></script>
+    <script>
+    $(document).ready(function() {
+        // Initialize our OOP classes
+        const sessionHandler = new SessionHandler();
+        const bookManager = new BookManager({
+            availableBooks: '#availableBooks',
+            issuedBooks: '#issuedBooks'
+        });
+        const profileManager = new ProfileManager({
+            welcomeName: '#studentName',
+            username: '#profileUsername',
+            name: '#profileName',
+            email: '#profileEmail',
+            createdAt: '#profileCreatedAt',
+            issuedCount: '#issuedCount',
+            totalFines: '#totalFines'
+        });
+
+        // Check if user is logged in
+        sessionHandler.checkLogin('/login.html')
+            .then(user => {
+                console.log('User session verified');
+                
+                // Initialize the profile manager (fetches and displays profile data)
+                profileManager.init();
+
+                // Load book data
+                bookManager.loadAvailableBooks();
+                bookManager.loadIssuedBooks();
+            })
+            .catch(error => {
+                console.error('Session error:', error);
+                // Error handling is already in the SessionHandler
+            });
+    });
+    </script>
+</body>
+</html>

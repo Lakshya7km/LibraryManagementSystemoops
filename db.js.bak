@@ -1,0 +1,393 @@
+const mysql = require('mysql2/promise');
+const bcrypt = require('bcrypt');
+const dotenv = require('dotenv');
+const { DateTime } = require('luxon');
+dotenv.config();
+
+// Database configuration
+const dbConfig = {
+    host: process.env.DB_HOST || 'sql12.freesqldatabase.com',
+    user: process.env.DB_USER || 'sql12775878',
+    password: process.env.DB_PASSWORD || 'r33tT2EF5Y',
+    database: process.env.DB_NAME || 'sql12775878',
+    port: process.env.DB_PORT || 3306,
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0,
+    enableKeepAlive: true,
+    keepAliveInitialDelay: 0
+};
+
+// Create a pool
+const pool = mysql.createPool(dbConfig);
+
+// Test the connection
+pool.getConnection()
+    .then(connection => {
+        console.log('Successfully connected to the database!');
+        connection.release();
+    })
+    .catch(err => {
+        console.error('Error connecting to the database:', err);
+        process.exit(1); // Exit if database connection fails
+    });
+
+// Database helper functions
+const db = {
+    // Execute a query with parameters
+    async execute(query, params = []) {
+        try {
+            return await pool.execute(query, params);
+        } catch (error) {
+            console.error('Database query error:', error);
+            throw error;
+        }
+    },
+
+    // Get a connection from the pool (for transactions)
+    async getConnection() {
+        try {
+            return await pool.getConnection();
+        } catch (error) {
+            console.error('Error getting database connection:', error);
+            throw error;
+        }
+    },
+
+    // Register a new student
+    async registerStudent(username, password, name, email) {
+        try {
+            // Check if username or email already exists
+            const [users] = await this.execute(
+                'SELECT student_id FROM students WHERE username = ? OR email = ?',
+                [username, email]
+            );
+
+            if (users.length > 0) {
+                return { success: false, message: 'Username or email already exists' };
+            }
+
+            // Hash password
+            const hashedPassword = await bcrypt.hash(password, 10);
+
+            // Insert new student
+            await this.execute(
+                'INSERT INTO students (username, password, name, email, created_at) VALUES (?, ?, ?, ?, CURDATE())',
+                [username, hashedPassword, name, email]
+            );
+
+            return { success: true, message: 'Registration successful' };
+        } catch (error) {
+            console.error('Error in registerStudent:', error);
+            return { success: false, message: 'Registration failed' };
+        }
+    },
+
+    // Verify student credentials
+    async verifyStudent(username, password) {
+        try {
+            const [students] = await this.execute(
+                'SELECT student_id, password, name, email FROM students WHERE username = ?',
+                [username]
+            );
+
+            if (students.length === 0) {
+                return null;
+            }
+
+            const student = students[0];
+            const passwordMatch = await bcrypt.compare(password, student.password);
+
+            if (!passwordMatch) {
+                return null;
+            }
+
+            return {
+                id: student.student_id,
+                name: student.name,
+                email: student.email
+            };
+        } catch (error) {
+            console.error('Error in verifyStudent:', error);
+            return null;
+        }
+    },
+
+    // Get student profile
+    async getStudentProfile(studentId) {
+        try {
+            const [students] = await this.execute(
+                'SELECT username, name, email, created_at FROM students WHERE student_id = ?',
+                [studentId]
+            );
+
+            return students.length > 0 ? students[0] : null;
+        } catch (error) {
+            console.error('Error in getStudentProfile:', error);
+            return null;
+        }
+    },
+
+    // Get all available books
+    async getAvailableBooks() {
+        try {
+            const [books] = await this.execute(
+                'SELECT book_id, isbn, title, author, available_quantity FROM books WHERE available_quantity > 0'
+            );
+            return books;
+        } catch (error) {
+            console.error('Error in getAvailableBooks:', error);
+            return [];
+        }
+    },
+
+    // Get all books (admin)
+    async getAllBooks() {
+        try {
+            const [books] = await this.execute('SELECT * FROM books');
+            return books;
+        } catch (error) {
+            console.error('Error in getAllBooks:', error);
+            return [];
+        }
+    },
+
+    // Issue a book to a student
+    async issueBook(studentId, bookId) {
+        const connection = await this.getConnection();
+        try {
+            await connection.beginTransaction();
+
+            // Check if book is available
+            const [books] = await connection.execute(
+                'SELECT available_quantity FROM books WHERE book_id = ?',
+                [bookId]
+            );
+
+            if (books.length === 0 || books[0].available_quantity <= 0) {
+                await connection.rollback();
+                return { success: false, message: 'Book not available' };
+            }
+
+            // Check if student already has this book
+            const [issuedBooks] = await connection.execute(
+                'SELECT issue_id FROM issued_books WHERE student_id = ? AND book_id = ? AND status = "issued"',
+                [studentId, bookId]
+            );
+
+            if (issuedBooks.length > 0) {
+                await connection.rollback();
+                return { success: false, message: 'You have already issued this book' };
+            }
+
+            // Issue the book
+            await connection.execute(
+                'INSERT INTO issued_books (student_id, book_id, issue_date, status) VALUES (?, ?, CURDATE(), "issued")',
+                [studentId, bookId]
+            );
+
+            // Update available quantity
+            await connection.execute(
+                'UPDATE books SET available_quantity = available_quantity - 1 WHERE book_id = ?',
+                [bookId]
+            );
+
+            await connection.commit();
+            return { success: true, message: 'Book issued successfully' };
+        } catch (error) {
+            await connection.rollback();
+            console.error('Error in issueBook:', error);
+            return { success: false, message: 'Failed to issue book' };
+        } finally {
+            connection.release();
+        }
+    },
+
+    // Return a book
+    async returnBook(issueId) {
+        const connection = await this.getConnection();
+        try {
+            await connection.beginTransaction();
+
+            // Get issue details
+            const [issues] = await connection.execute(
+                'SELECT * FROM issued_books WHERE issue_id = ?',
+                [issueId]
+            );
+
+            if (issues.length === 0) {
+                await connection.rollback();
+                return { success: false, message: 'Issue record not found' };
+            }
+
+            const issue = issues[0];
+            if (issue.status === 'returned') {
+                await connection.rollback();
+                return { success: false, message: 'This book has already been returned' };
+            }
+
+            // Calculate fine (₹5 per day after 7 days)
+            const issueDate = new Date(issue.issue_date);
+            const today = new Date();
+            const daysIssued = Math.floor((today - issueDate) / (1000 * 60 * 60 * 24));
+            const daysOverdue = Math.max(0, daysIssued - 7); // 7 days grace period
+            const fineAmount = daysOverdue * 5; // ₹5 per day
+
+            // Update issued_books record
+            await connection.execute(
+                'UPDATE issued_books SET return_date = CURDATE(), status = "returned", fine_amount = ? WHERE issue_id = ?',
+                [fineAmount, issueId]
+            );
+
+            // Update book available quantity
+            await connection.execute(
+                'UPDATE books SET available_quantity = available_quantity + 1 WHERE book_id = ?',
+                [issue.book_id]
+            );
+
+            await connection.commit();
+            return { 
+                success: true, 
+                message: 'Book returned successfully',
+                fine: fineAmount,
+                daysOverdue: daysOverdue
+            };
+        } catch (error) {
+            await connection.rollback();
+            console.error('Error in returnBook:', error);
+            return { success: false, message: 'Failed to return book: ' + error.message };
+        } finally {
+            connection.release();
+        }
+    },
+
+    // Get books issued to a student
+    async getIssuedBooks(studentId) {
+        try {
+            const [issuedBooks] = await this.execute(
+                `SELECT 
+                    ib.*,
+                    b.title,
+                    b.author,
+                    b.isbn,
+                    DATEDIFF(CURDATE(), ib.issue_date) as days_issued
+                FROM issued_books ib
+                JOIN books b ON ib.book_id = b.book_id
+                WHERE ib.student_id = ?
+                ORDER BY ib.issue_date DESC`,
+                [studentId]
+            );
+
+            // Calculate pending fines
+            issuedBooks.forEach(book => {
+                if (book.status === 'issued' && book.days_issued > 7) {
+                    book.pending_fine = (book.days_issued - 7) * 5;
+                } else {
+                    book.pending_fine = 0;
+                }
+            });
+
+            return issuedBooks;
+        } catch (error) {
+            console.error('Error in getIssuedBooks:', error);
+            return [];
+        }
+    },
+
+    // Get all issued books (admin)
+    async getAllIssuedBooks() {
+        try {
+            const [issuedBooks] = await this.execute(
+                `SELECT 
+                    ib.*,
+                    b.title,
+                    b.isbn,
+                    s.username,
+                    s.name as student_name,
+                    s.email,
+                    DATEDIFF(CURDATE(), ib.issue_date) as days_issued
+                FROM issued_books ib
+                JOIN books b ON ib.book_id = b.book_id
+                JOIN students s ON ib.student_id = s.student_id
+                ORDER BY ib.issue_date DESC`
+            );
+
+            return issuedBooks;
+        } catch (error) {
+            console.error('Error in getAllIssuedBooks:', error);
+            return [];
+        }
+    },
+
+    // Get fines for students (admin)
+    async getStudentsWithFines() {
+        try {
+            const [students] = await this.execute(
+                `SELECT 
+                    s.student_id,
+                    s.username,
+                    s.name,
+                    s.email,
+                    COALESCE(SUM(ib.fine_amount), 0) as total_fines,
+                    COUNT(CASE WHEN ib.status = 'issued' THEN 1 END) as pending_books
+                FROM students s
+                LEFT JOIN issued_books ib ON s.student_id = ib.student_id
+                GROUP BY s.student_id
+                HAVING pending_books > 0 OR total_fines > 0
+                ORDER BY total_fines DESC, pending_books DESC`
+            );
+
+            return students;
+        } catch (error) {
+            console.error('Error in getStudentsWithFines:', error);
+            return [];
+        }
+    },
+
+    // Add a new book
+    async addBook(isbn, title, author, quantity) {
+        try {
+            await this.execute(
+                'INSERT INTO books (isbn, title, author, quantity, available_quantity) VALUES (?, ?, ?, ?, ?)',
+                [isbn, title, author, quantity, quantity]
+            );
+            return { success: true, message: 'Book added successfully' };
+        } catch (error) {
+            console.error('Error in addBook:', error);
+            return { success: false, message: 'Failed to add book: ' + error.message };
+        }
+    },
+
+    // Edit a book
+    async editBook(bookId, title, author, quantity, availableQuantity) {
+        try {
+            await this.execute(
+                'UPDATE books SET title = ?, author = ?, quantity = ?, available_quantity = ? WHERE book_id = ?',
+                [title, author, quantity, availableQuantity, bookId]
+            );
+            return { success: true, message: 'Book updated successfully' };
+        } catch (error) {
+            console.error('Error in editBook:', error);
+            return { success: false, message: 'Failed to update book: ' + error.message };
+        }
+    },
+
+    // Generate a random ISBN
+    generateISBN() {
+        // ISBN-13 format: 978 or 979 + 9 random digits + check digit
+        const prefix = Math.random() < 0.5 ? '978' : '979';
+        const randomDigits = Array.from({length: 9}, () => Math.floor(Math.random() * 10)).join('');
+        
+        // Calculate check digit
+        const isbn = prefix + randomDigits;
+        let sum = 0;
+        for (let i = 0; i < 12; i++) {
+            sum += parseInt(isbn[i]) * (i % 2 === 0 ? 1 : 3);
+        }
+        const checkDigit = (10 - (sum % 10)) % 10;
+        
+        return isbn + checkDigit;
+    }
+};
+
+module.exports = db;
